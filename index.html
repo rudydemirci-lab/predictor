@@ -120,35 +120,70 @@ async function fetchMatches(fdKey){
 async function fetchH2H(fdKey,id){try{const d=await fdFetch(fdKey,`/matches/${id}/head2head?limit=5`);return d.matches||[];}catch{return[];}}
 async function fetchStandings(fdKey,cid){try{return await fdFetch(fdKey,`/competitions/${cid}/standings`);}catch{return null;}}
 
-async function callAI(key, prompt, maxTok=1024){
+// ── TEAM NAME HELPER ──────────────────────────────────────────────────────────
+function teamName(team) {
+  if (!team) return "?";
+  // Prefer shortName, otherwise clean up the full name
+  if (team.shortName && team.shortName.length > 0) return team.shortName;
+  const n = team.name || "";
+  return n.replace(/^(FC |AS |AC |SSC |AFC |RC |SC |SL |GD |CF |UD |RCD |SD |CE |CD |CA |Athletic |Atletico |Real |Paris |Olympique |Borussia |Bayer |RB |1\. )/i,"").replace(/ (FC|CF|SC|AC|BC|FK|SK|IF|BK|United|City|Town|Rovers|Wanderers|Athletic|Albion|Wednesday|Thursday|Friday|Palace|Villa|County|Orient|Rangers|Hotspur|Arsenal|Chelsea|United)$/i,"$1").trim() || n;
+}
+
+async function callAI(key, prompt, maxTok=800){
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
     {method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.7,maxOutputTokens:maxTok}})});
+     body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.6,maxOutputTokens:maxTok}})});
   if(!r.ok)throw new Error(`API ${r.status}`);
   const d=await r.json();
   return (d.candidates?.[0]?.content?.parts?.[0]?.text||"").replace(/```json|```/g,"").trim();
 }
 
 async function analyzeMatch(key,match,h2h,homeS,awayS){
-  const p=`Expert football. Retourne UNIQUEMENT du JSON valide sans markdown.
-MATCH: ${match.homeTeam.name} vs ${match.awayTeam.name} | ${match.competition.name}
-DOM: ${homeS?`${homeS.position}e, ${homeS.won}V${homeS.draw}N${homeS.lost}D`:"N/A"}
-EXT: ${awayS?`${awayS.position}e, ${awayS.won}V${awayS.draw}N${awayS.lost}D`:"N/A"}
-H2H: ${h2h.length?h2h.map(m=>{const s=m.score?.fullTime;return`${m.homeTeam?.name} ${s?`${s.home}-${s.away}`:"?"} ${m.awayTeam?.name}`;}).join("|"):"Aucun"}
-JSON: {"result":{"pick":"1","label":"${match.homeTeam.name} gagne","confidence":70,"odds":1.90},"score":{"home":2,"away":1,"confidence":28,"odds":7.50},"btts":{"pick":true,"label":"OUI","confidence":65,"odds":1.75},"value":false,"analysis":"Analyse tactique 2-3 phrases en français.","factors":[{"label":"Forme domicile","home":80,"away":60,"icon":"🏠"},{"label":"Attaque","home":82,"away":70,"icon":"⚡"},{"label":"Défense","home":75,"away":68,"icon":"🛡️"},{"label":"H2H","home":65,"away":55,"icon":"📊"},{"label":"Fraîcheur","home":78,"away":72,"icon":"💪"}]}`;
-  return JSON.parse(await callAI(key,p));
+  const home=teamName(match.homeTeam), away=teamName(match.awayTeam);
+  const p=`Football expert. JSON only, no markdown.
+${home} vs ${away} (${match.competition.name})
+Home rank: ${homeS?`${homeS.position}th, ${homeS.won}W${homeS.draw}D${homeS.lost}L`:"unknown"}
+Away rank: ${awayS?`${awayS.position}th, ${awayS.won}W${awayS.draw}N${awayS.lost}L`:"unknown"}
+H2H last 5: ${h2h.length?h2h.map(m=>{const s=m.score?.fullTime;return s?`${s.home}-${s.away}`:""}).filter(Boolean).join(","):"none"}
+Return this exact JSON structure:
+{"result":{"pick":"1","label":"${home} wins","confidence":68,"odds":1.95},"score":{"home":2,"away":1,"confidence":25,"odds":7.50},"btts":{"pick":true,"label":"OUI","confidence":62,"odds":1.80},"value":false,"analysis":"2 sentences in French about this match.","factors":[{"label":"Forme domicile","home":78,"away":62,"icon":"🏠"},{"label":"Attaque","home":80,"away":70,"icon":"⚡"},{"label":"Défense","home":74,"away":66,"icon":"🛡️"},{"label":"H2H","home":65,"away":55,"icon":"📊"},{"label":"Fraîcheur","home":76,"away":72,"icon":"💪"}]}`;
+  return JSON.parse(await callAI(key,p,700));
 }
 
+// Generate week matches in small batches of 4
 async function generateWeek(key){
   const today=new Date();
-  const days=Array.from({length:7},(_,i)=>{const d=new Date(today);d.setDate(d.getDate()+i+1);return d.toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"});});
-  const p=`Expert football. Génère 12-16 matchs des 7 prochains jours pour UCL, PL, La Liga, Ligue 1, Bundesliga, Serie A, Liga Portugal.
-Jours disponibles: ${days.join(", ")}.
-Retourne UNIQUEMENT un tableau JSON sans markdown.
-Format exact (un objet par match):
-[{"id":9001,"day":"Mer 30 Avr","date":"2026-04-30","time":"21:00","league":{"name":"Premier League","short":"PL","color":"#7b2fd4"},"homeTeam":{"id":57,"name":"Arsenal","shortName":"Arsenal","crest":"https://crests.football-data.org/57.png"},"awayTeam":{"id":61,"name":"Chelsea","shortName":"Chelsea","crest":"https://crests.football-data.org/61.png"},"status":"SCHEDULED","competition":{"id":2021,"name":"Premier League"},"prono":{"result":{"pick":"1","label":"Arsenal gagne","confidence":71,"odds":1.90},"score":{"home":2,"away":0,"confidence":30,"odds":7.00},"btts":{"pick":false,"label":"NON","confidence":60,"odds":2.05},"value":true,"analysis":"Arsenal très solide à domicile cette saison, Chelsea en méforme en déplacement.","factors":[{"label":"Forme domicile","home":85,"away":58,"icon":"🏠"},{"label":"Attaque","home":82,"away":71,"icon":"⚡"},{"label":"Défense","home":80,"away":64,"icon":"🛡️"},{"label":"H2H","home":68,"away":52,"icon":"📊"},{"label":"Fraîcheur","home":78,"away":70,"icon":"💪"}]}}]
-IDs crests: Real Madrid=86,Barcelona=81,PSG=524,Bayern=5,Liverpool=64,ManCity=65,Arsenal=57,Chelsea=61,ManUnited=66,Tottenham=73,Juventus=109,Inter=108,Milan=98,Napoli=113,Dortmund=4,Leverkusen=3,Atletico=78,Sevilla=559,Benfica=1903,Porto=503,Lyon=1649,Monaco=1903,Marseille=516,Lazio=110,Roma=100.`;
-  return JSON.parse(await callAI(key,p,4096));
+  const days=Array.from({length:7},(_,i)=>{const d=new Date(today);d.setDate(d.getDate()+i+1);return{short:d.toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}),date:d.toISOString().slice(0,10)};});
+
+  const batches = [
+    { leagues:"UCL,Premier League", count:4 },
+    { leagues:"La Liga,Ligue 1", count:4 },
+    { leagues:"Bundesliga,Serie A,Liga Portugal", count:4 },
+  ];
+
+  const CRESTS={86:"Real Madrid",81:"Barcelona",524:"PSG",5:"Bayern",64:"Liverpool",65:"Man City",57:"Arsenal",61:"Chelsea",66:"Man United",73:"Tottenham",109:"Juventus",108:"Inter",98:"Milan",113:"Napoli",4:"Dortmund",3:"Leverkusen",78:"Atletico",559:"Sevilla",1903:"Benfica",503:"Porto",1649:"Lyon",516:"Marseille",110:"Lazio",100:"Roma"};
+
+  let all=[], idCounter=9001;
+  for(const batch of batches){
+    const dayList=days.map(d=>`${d.short} (${d.date})`).join(", ");
+    const p=`Football expert. Generate exactly ${batch.count} upcoming matches for ${batch.leagues}.
+Use these days: ${dayList}
+Return ONLY a JSON array, no markdown. Each match:
+{"id":${idCounter},"day":"Mer 30 Avr","date":"2026-04-30","time":"21:00","league":{"name":"Premier League","short":"PL","color":"#7b2fd4"},"homeTeam":{"id":57,"name":"Arsenal","shortName":"Arsenal","crest":"https://crests.football-data.org/57.png"},"awayTeam":{"id":61,"name":"Chelsea","shortName":"Chelsea","crest":"https://crests.football-data.org/61.png"},"status":"SCHEDULED","competition":{"id":2021,"name":"Premier League"},"prono":{"result":{"pick":"1","label":"Arsenal gagne","confidence":71,"odds":1.90},"score":{"home":2,"away":0,"confidence":28,"odds":7.00},"btts":{"pick":false,"label":"NON","confidence":58,"odds":2.05},"value":true,"analysis":"Arsenal domine à domicile, Chelsea fragile en déplacement.","factors":[{"label":"Forme domicile","home":85,"away":58,"icon":"🏠"},{"label":"Attaque","home":82,"away":71,"icon":"⚡"},{"label":"Défense","home":80,"away":64,"icon":"🛡️"},{"label":"H2H","home":68,"away":52,"icon":"📊"},{"label":"Fraîcheur","home":78,"away":70,"icon":"💪"}]}}
+Crest URLs: https://crests.football-data.org/[ID].png
+IDs: Real Madrid=86,Barcelona=81,PSG=524,Bayern=5,Liverpool=64,ManCity=65,Arsenal=57,Chelsea=61,ManUnited=66,Tottenham=73,Juventus=109,Inter=108,Milan=98,Napoli=113,Dortmund=4,Leverkusen=3,Atletico=78,Benfica=1903,Porto=503,Lyon=1649,Marseille=516,Monaco=548`;
+    try{
+      const text=await callAI(key,p,2000);
+      const arr=JSON.parse(text);
+      if(Array.isArray(arr)){
+        arr.forEach((m,i)=>{m.id=idCounter+i;});
+        all=[...all,...arr];
+        idCounter+=arr.length;
+      }
+    }catch(e){console.warn("Batch failed:",e.message);}
+    await new Promise(r=>setTimeout(r,500));
+  }
+  return all;
 }
 
 // ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
@@ -280,7 +315,7 @@ function Podium({allMatches,pronos,title,subtitle,onSelect}){
                   <span style={{fontSize:7,color:"rgba(255,255,255,0.2)"}}>vs</span>
                   <TeamLogo crest={m.awayTeam.crest} name={m.awayTeam.name} size={24}/>
                 </div>
-                <div style={{fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.45)",marginBottom:5,lineHeight:1.3}}>{m.homeTeam.shortName||m.homeTeam.name} — {m.awayTeam.shortName||m.awayTeam.name}</div>
+                <div style={{fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.45)",marginBottom:5,lineHeight:1.3}}>{teamName(m.homeTeam)} — {teamName(m.awayTeam)}</div>
                 <div style={{display:"flex",justifyContent:"center",marginBottom:5}}><ConfidenceRing value={prono.result.confidence} size={42} sublabel="conf."/></div>
                 <div style={{fontSize:10,fontWeight:800,color:col,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:0.5}}>{prono.result.label}</div>
                 <div style={{fontSize:8,color:"rgba(255,255,255,0.25)",marginTop:2}}>{league.short} · {time}</div>
@@ -326,13 +361,13 @@ function MatchCard({match,prono,onClick,isFav,onToggleFav}){
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:12}}>
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
           <TeamLogo crest={match.homeTeam.crest} name={match.homeTeam.name} size={38}/>
-          <span style={{fontSize:10,fontWeight:700,color:"#e2e8f4",textAlign:"center",lineHeight:1.2}}>{match.homeTeam.shortName||match.homeTeam.name}</span>
+          <span style={{fontSize:10,fontWeight:700,color:"#e2e8f4",textAlign:"center",lineHeight:1.2}}>{teamName(match.homeTeam)}</span>
         </div>
         {scoreStr?<span style={{fontSize:22,fontWeight:900,color:"#e2e8f4",fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2}}>{scoreStr}</span>
           :<span style={{fontSize:14,fontWeight:900,color:"rgba(255,255,255,0.14)",fontFamily:"'Bebas Neue',sans-serif"}}>VS</span>}
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
           <TeamLogo crest={match.awayTeam.crest} name={match.awayTeam.name} size={38}/>
-          <span style={{fontSize:10,fontWeight:700,color:"#e2e8f4",textAlign:"center",lineHeight:1.2}}>{match.awayTeam.shortName||match.awayTeam.name}</span>
+          <span style={{fontSize:10,fontWeight:700,color:"#e2e8f4",textAlign:"center",lineHeight:1.2}}>{teamName(match.awayTeam)}</span>
         </div>
       </div>
 
@@ -388,7 +423,7 @@ function MatchDetail({match,prono,h2h,onBack}){
                   <div style={{position:"absolute",inset:-8,borderRadius:"50%",background:(i===0?HC:AC)+"12",filter:"blur(10px)"}}/>
                   <TeamLogo crest={team.crest} name={team.name} size={62}/>
                 </div>
-                <div style={{fontSize:14,fontWeight:900,color:"#e2e8f4",fontFamily:"'Bebas Neue',sans-serif",textAlign:"center",letterSpacing:1}}>{team.name}</div>
+                <div style={{fontSize:14,fontWeight:900,color:"#e2e8f4",fontFamily:"'Bebas Neue',sans-serif",textAlign:"center",letterSpacing:1}}>{teamName(team)}</div>
               </div>
             ))}
             <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -474,7 +509,7 @@ function MatchDetail({match,prono,h2h,onBack}){
           return(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:4}}>
-                {[{l:match.homeTeam.shortName||match.homeTeam.name,v:wins.h,c:HC},{l:"NUL",v:wins.d,c:"#f5a623"},{l:match.awayTeam.shortName||match.awayTeam.name,v:wins.a,c:AC}].map(s=>(
+                {[{l:teamName(match.homeTeam),v:wins.h,c:HC},{l:"NUL",v:wins.d,c:"#f5a623"},{l:teamName(match.awayTeam),v:wins.a,c:AC}].map(s=>(
                   <div key={s.l} style={{background:"#0c1220",borderRadius:12,padding:"12px 8px",textAlign:"center",border:`1px solid ${s.c}33`}}>
                     <div style={{fontSize:26,fontWeight:900,color:s.c,fontFamily:"'Bebas Neue',sans-serif"}}>{s.v}</div>
                     <div style={{fontSize:9,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:"0.08em"}}>{s.l}</div>
@@ -489,9 +524,9 @@ function MatchDetail({match,prono,h2h,onBack}){
                   <div key={i} style={{background:"#0c1220",borderRadius:10,padding:"10px 14px",border:"1px solid rgba(255,255,255,0.06)",display:"flex",alignItems:"center",gap:10}}>
                     <span style={{fontSize:9,color:"rgba(255,255,255,0.25)",minWidth:52}}>{new Date(m.utcDate).toLocaleDateString("fr-FR",{month:"short",year:"numeric"})}</span>
                     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                      <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{m.homeTeam?.shortName||m.homeTeam?.name}</span>
+                      <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{m.homeTeam?.shortName||teamName(m.homeTeam)}</span>
                       <span style={{fontSize:15,fontWeight:900,color:wc,fontFamily:"'Bebas Neue',sans-serif",padding:"0 8px"}}>{sc}</span>
-                      <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{m.awayTeam?.shortName||m.awayTeam?.name}</span>
+                      <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{m.awayTeam?.shortName||teamName(m.awayTeam)}</span>
                     </div>
                   </div>
                 );
