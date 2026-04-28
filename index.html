@@ -275,22 +275,12 @@ function ConfigScreen({ onSave }) {
   const [fd, setFd] = useState("");
   const [gem, setGem] = useState("");
   const [err, setErr] = useState("");
-  const [testing, setTesting] = useState(false);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!fd.trim() || !gem.trim()) { setErr("Les deux clés sont requises."); return; }
-    setTesting(true); setErr("");
-    try {
-      const testUrl = "https://api.football-data.org/v4/matches?dateFrom=2024-01-01&dateTo=2024-01-01";
-      const proxied = `https://api.allorigins.win/raw?url=${encodeURIComponent(testUrl)}`;
-      const res = await fetch(proxied, { headers: { "X-Auth-Token": fd.trim() } });
-      if (res.status === 403 || res.status === 401) throw new Error("Clé Football-Data invalide.");
-      store.set("pf_fd_key", fd.trim());
-      store.set("pf_gem_key", gem.trim());
-      onSave(fd.trim(), gem.trim());
-    } catch(e) {
-      setErr(e.message || "Erreur de connexion. Vérifiez vos clés.");
-    } finally { setTesting(false); }
+    store.set("pf_fd_key", fd.trim());
+    store.set("pf_gem_key", gem.trim());
+    onSave(fd.trim(), gem.trim());
   };
 
   return (
@@ -323,8 +313,8 @@ function ConfigScreen({ onSave }) {
 
         {err && <div style={{ background:"rgba(255,61,90,0.1)", border:"1px solid #ff3d5a44", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#ff3d5a", marginBottom:16 }}>{err}</div>}
 
-        <button className="config-btn" onClick={handleSave} disabled={testing}>
-          {testing ? "⟳ Vérification..." : "LANCER L'APPLICATION →"}
+        <button className="config-btn" onClick={handleSave}>
+          LANCER L'APPLICATION →
         </button>
 
         <div style={{ marginTop:16, fontSize:10, color:"rgba(255,255,255,0.2)", textAlign:"center", lineHeight:1.6 }}>
