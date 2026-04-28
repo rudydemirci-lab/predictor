@@ -95,17 +95,24 @@ const store = {
 function confColor(v) { return v >= 65 ? "#05d46b" : v >= 45 ? "#f5a623" : "#ff3d5a"; }
 function leagueFromId(id) { return Object.values(COMPETITIONS).find(c => c.id === id) || { name:"Autre", short:"?", color:"#888" }; }
 
-// ── FOOTBALL-DATA API (via CORS proxy) ───────────────────────────────────────
-const PROXY = "https://corsproxy.io/?url=";
-
+// ── FOOTBALL-DATA API (multi-proxy fallback) ──────────────────────────────────
 async function fdFetch(fdKey, path) {
   const url = `https://api.football-data.org/v4${path}`;
-  const proxied = `${PROXY}${encodeURIComponent(url)}`;
-  const res = await fetch(proxied, {
-    headers: { "X-Auth-Token": fdKey, "Origin": "https://rudydemirci-lab.github.io" }
-  });
-  if (!res.ok) throw new Error(`Football-Data ${res.status}: ${res.statusText}`);
-  return res.json();
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    `https://thingproxy.freeboard.io/fetch/${url}`,
+  ];
+  let lastErr;
+  for (const proxied of proxies) {
+    try {
+      const res = await fetch(proxied, { headers: { "X-Auth-Token": fdKey } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      return data;
+    } catch(e) { lastErr = e; continue; }
+  }
+  throw new Error(`Impossible de contacter Football-Data: ${lastErr?.message}`);
 }
 
 async function fetchMatches(fdKey) {
@@ -274,8 +281,9 @@ function ConfigScreen({ onSave }) {
     if (!fd.trim() || !gem.trim()) { setErr("Les deux clés sont requises."); return; }
     setTesting(true); setErr("");
     try {
-      const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent("https://api.football-data.org/v4/matches?dateFrom=2024-01-01&dateTo=2024-01-01")}`;
-      const res = await fetch(proxyUrl, { headers: { "X-Auth-Token": fd.trim() } });
+      const testUrl = "https://api.football-data.org/v4/matches?dateFrom=2024-01-01&dateTo=2024-01-01";
+      const proxied = `https://api.allorigins.win/raw?url=${encodeURIComponent(testUrl)}`;
+      const res = await fetch(proxied, { headers: { "X-Auth-Token": fd.trim() } });
       if (res.status === 403 || res.status === 401) throw new Error("Clé Football-Data invalide.");
       store.set("pf_fd_key", fd.trim());
       store.set("pf_gem_key", gem.trim());
