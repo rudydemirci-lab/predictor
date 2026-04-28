@@ -95,33 +95,37 @@ const store = {
 function confColor(v) { return v >= 65 ? "#05d46b" : v >= 45 ? "#f5a623" : "#ff3d5a"; }
 function leagueFromId(id) { return Object.values(COMPETITIONS).find(c => c.id === id) || { name:"Autre", short:"?", color:"#888" }; }
 
-// ── FOOTBALL-DATA API ─────────────────────────────────────────────────────────
+// ── FOOTBALL-DATA API (via CORS proxy) ───────────────────────────────────────
+const PROXY = "https://corsproxy.io/?url=";
+
+async function fdFetch(fdKey, path) {
+  const url = `https://api.football-data.org/v4${path}`;
+  const proxied = `${PROXY}${encodeURIComponent(url)}`;
+  const res = await fetch(proxied, {
+    headers: { "X-Auth-Token": fdKey, "Origin": "https://rudydemirci-lab.github.io" }
+  });
+  if (!res.ok) throw new Error(`Football-Data ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
 async function fetchMatches(fdKey) {
   const today = new Date().toISOString().slice(0,10);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0,10);
-  const url = `https://api.football-data.org/v4/matches?dateFrom=${today}&dateTo=${tomorrow}`;
-  const res = await fetch(url, { headers: { "X-Auth-Token": fdKey } });
-  if (!res.ok) throw new Error(`Football-Data: ${res.status} ${res.statusText}`);
-  const data = await res.json();
-  // Filter to our competitions only
+  const data = await fdFetch(fdKey, `/matches?dateFrom=${today}&dateTo=${tomorrow}`);
   return (data.matches || []).filter(m => COMP_IDS.includes(m.competition?.id));
 }
 
 async function fetchH2H(fdKey, matchId) {
-  const res = await fetch(`https://api.football-data.org/v4/matches/${matchId}/head2head?limit=5`, {
-    headers: { "X-Auth-Token": fdKey }
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.matches || []).slice(0,5);
+  try {
+    const data = await fdFetch(fdKey, `/matches/${matchId}/head2head?limit=5`);
+    return (data.matches || []).slice(0,5);
+  } catch { return []; }
 }
 
 async function fetchStandings(fdKey, competitionId) {
-  const res = await fetch(`https://api.football-data.org/v4/competitions/${competitionId}/standings`, {
-    headers: { "X-Auth-Token": fdKey }
-  });
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    return await fdFetch(fdKey, `/competitions/${competitionId}/standings`);
+  } catch { return null; }
 }
 
 // ── GEMINI AI ─────────────────────────────────────────────────────────────────
@@ -270,9 +274,8 @@ function ConfigScreen({ onSave }) {
     if (!fd.trim() || !gem.trim()) { setErr("Les deux clés sont requises."); return; }
     setTesting(true); setErr("");
     try {
-      const res = await fetch("https://api.football-data.org/v4/matches?dateFrom=2024-01-01&dateTo=2024-01-01", {
-        headers: { "X-Auth-Token": fd.trim() }
-      });
+      const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent("https://api.football-data.org/v4/matches?dateFrom=2024-01-01&dateTo=2024-01-01")}`;
+      const res = await fetch(proxyUrl, { headers: { "X-Auth-Token": fd.trim() } });
       if (res.status === 403 || res.status === 401) throw new Error("Clé Football-Data invalide.");
       store.set("pf_fd_key", fd.trim());
       store.set("pf_gem_key", gem.trim());
